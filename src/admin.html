@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>demo.important.is — Admin</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #1e1e2e; --sidebar: #181825; --border: #313244;
+      --text: #cdd6f4; --dim: #6c7086; --accent: #89b4fa; --accent2: #74c7ec;
+      --danger: #f38ba8; --success: #a6e3a1; --input: #313244;
+      --hover: rgba(137,180,250,0.08); --active: rgba(137,180,250,0.15);
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    .topbar { height: 46px; background: var(--sidebar); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 10px; flex-shrink: 0; }
+    .logo { font-size: 13px; font-weight: 600; color: var(--accent); }
+    .sep { color: var(--border); }
+    #project-title { font-size: 13px; color: var(--dim); }
+    .topbar-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+    .btn { padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: all 0.15s; }
+    .btn-primary { background: var(--accent); color: #1e1e2e; }
+    .btn-primary:hover { background: var(--accent2); }
+    .btn-secondary { background: var(--input); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: #45475a; }
+    .btn-ghost { background: transparent; color: var(--danger); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: rgba(243,139,168,0.1); }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .layout { display: flex; flex: 1; overflow: hidden; }
+    .sidebar { width: 210px; background: var(--sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+    .sidebar-hdr { padding: 10px 14px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    .sidebar-hdr button { background: none; border: none; color: var(--accent); font-size: 16px; cursor: pointer; }
+    .sidebar-list { flex: 1; overflow-y: auto; padding: 6px 0; }
+    .proj-item { padding: 8px 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 13px; transition: background 0.1s; }
+    .proj-item:hover { background: var(--hover); }
+    .proj-item.active { background: var(--active); color: var(--accent); }
+    .proj-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .proj-link { color: var(--dim); font-size: 11px; opacity: 0; transition: opacity .1s; text-decoration: none; }
+    .proj-item:hover .proj-link { opacity: 1; }
+    .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--dim); }
+    .empty h2 { font-size: 20px; color: var(--text); font-weight: 500; }
+    .editor-wrap { flex: 1; display: flex; overflow: hidden; }
+    .file-tree { width: 150px; background: var(--sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+    .file-tree-hdr { padding: 8px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); border-bottom: 1px solid var(--border); }
+    .file-list { padding: 4px 0; overflow-y: auto; flex: 1; }
+    .file-item { padding: 6px 12px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .file-item:hover { background: var(--hover); color: var(--text); }
+    .file-item.active { color: var(--text); background: var(--active); }
+    .editor-center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    #monaco { flex: 1; min-height: 0; }
+    .ai-bar { border-top: 1px solid var(--border); padding: 8px 10px; display: flex; gap: 8px; background: var(--sidebar); align-items: center; flex-shrink: 0; }
+    .ai-bar input { flex: 1; background: var(--input); border: 1px solid var(--border); border-radius: 6px; padding: 7px 12px; color: var(--text); font-size: 13px; outline: none; }
+    .ai-bar input:focus { border-color: var(--accent); }
+    .ai-bar input::placeholder { color: var(--dim); }
+    .preview { width: 44%; border-left: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+    .preview-hdr { padding: 7px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); border-bottom: 1px solid var(--border); background: var(--sidebar); display: flex; justify-content: space-between; align-items: center; }
+    .preview-hdr a { color: var(--accent); font-size: 11px; text-decoration: none; }
+    #preview-frame { flex: 1; border: none; background: white; }
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 100; }
+    .overlay.open { display: flex; }
+    .modal { background: var(--sidebar); border: 1px solid var(--border); border-radius: 12px; width: 500px; max-width: 95vw; }
+    .modal-hdr { padding: 20px 22px 0; display: flex; justify-content: space-between; align-items: center; }
+    .modal-hdr h3 { font-size: 16px; font-weight: 600; }
+    .modal-close { background: none; border: none; color: var(--dim); font-size: 22px; cursor: pointer; }
+    .modal-body { padding: 18px 22px; }
+    .modal-foot { padding: 0 22px 20px; display: flex; justify-content: flex-end; gap: 8px; }
+    .fg { margin-bottom: 14px; }
+    .fg label { display: block; font-size: 12px; color: var(--dim); margin-bottom: 5px; }
+    .fg input, .fg textarea { width: 100%; background: var(--input); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; color: var(--text); font-size: 13px; outline: none; font-family: inherit; }
+    .fg textarea { height: 170px; resize: vertical; font-family: 'Monaco', 'Consolas', monospace; font-size: 12px; }
+    .fg input:focus, .fg textarea:focus { border-color: var(--accent); }
+    .tabs { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+    .tab-btn { padding: 7px 16px; background: none; border: none; color: var(--dim); font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
+    .chip { font-size: 11px; background: var(--active); color: var(--accent); padding: 2px 8px; border-radius: 4px; font-family: monospace; }
+    .toast { position: fixed; bottom: 20px; right: 20px; background: var(--input); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; font-size: 13px; z-index: 200; opacity: 0; pointer-events: none; transition: opacity .2s; }
+    .toast.show { opacity: 1; }
+    .toast.ok { border-color: var(--success); color: var(--success); }
+    .toast.err { border-color: var(--danger); color: var(--danger); }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="logo">⚡ demo.important.is</span>
+  <span class="sep">/</span>
+  <span id="project-title">admin</span>
+  <div class="topbar-right">
+    <span id="url-chip" class="chip" style="display:none"></span>
+    <button class="btn btn-sm btn-secondary" id="btn-save" style="display:none" onclick="saveFile()">⌘S Zapisz</button>
+    <button class="btn btn-sm btn-ghost" id="btn-del" style="display:none" onclick="deleteProject()">Usuń projekt</button>
+    <button class="btn btn-primary btn-sm" onclick="openModal()">+ Nowy projekt</button>
+  </div>
+</div>
+
+<div class="layout">
+  <div class="sidebar">
+    <div class="sidebar-hdr">
+      Projekty
+      <button onclick="loadProjects()" title="Odśwież">↻</button>
+    </div>
+    <div class="sidebar-list" id="proj-list">
+      <div style="padding:14px;font-size:12px;color:var(--dim)">Ładowanie...</div>
+    </div>
+  </div>
+
+  <div id="empty" class="empty">
+    <div style="font-size:52px">🚀</div>
+    <h2>demo.important.is</h2>
+    <p>Wybierz projekt lub utwórz nowy</p>
+    <button class="btn btn-primary" onclick="openModal()">+ Nowy projekt</button>
+  </div>
+
+  <div class="editor-wrap" id="editor-wrap" style="display:none">
+    <div class="file-tree">
+      <div class="file-tree-hdr">Pliki</div>
+      <div class="file-list" id="file-list"></div>
+    </div>
+    <div class="editor-center">
+      <div id="monaco"></div>
+      <div class="ai-bar">
+        <input type="text" id="ai-input" placeholder="np. zmień przycisk na niebieski, dodaj animację..."/>
+        <button class="btn btn-primary btn-sm" id="btn-ai" onclick="applyAI()">✨ AI</button>
+      </div>
+    </div>
+    <div class="preview">
+      <div class="preview-hdr">
+        <span>Preview</span>
+        <a id="preview-link" href="#" target="_blank">Otwórz ↗</a>
+      </div>
+      <iframe id="preview-frame" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="modal">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h3>Nowy projekt</h3>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="fg">
+        <label>URL: demo.important.is/<strong id="slug-preview" style="color:var(--accent)">...</strong></label>
+        <input type="text" id="new-slug" placeholder="np. klient-abc" oninput="slugPreview()"/>
+      </div>
+      <div class="tabs">
+        <button class="tab-btn active" id="tab-paste-btn" onclick="switchTab('paste')">Wklej HTML</button>
+        <button class="tab-btn" id="tab-upload-btn" onclick="switchTab('upload')">Upload ZIP</button>
+      </div>
+      <div class="tab-pane active" id="pane-paste">
+        <div class="fg">
+          <label>HTML</label>
+          <textarea id="new-html" placeholder="Wklej kod HTML tutaj..."></textarea>
+        </div>
+      </div>
+      <div class="tab-pane" id="pane-upload">
+        <div class="fg">
+          <label>Plik ZIP</label>
+          <input type="file" id="new-zip" accept=".zip" style="color:var(--text)"/>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-secondary" onclick="closeModal()">Anuluj</button>
+      <button class="btn btn-primary" id="btn-create" onclick="createProject()">Utwórz →</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.46.0/min/vs/loader.min.js"></script>
+<script>
+  'use strict'
+  let editor = null
+  let currentProject = null
+  let currentFile = null
+  let activeTab = 'paste'
+
+  // Safe text helper — never use innerHTML with user data
+  function el(tag, props, ...children) {
+    const node = document.createElement(tag)
+    if (props) Object.assign(node, props)
+    for (const child of children) {
+      if (typeof child === 'string') node.appendChild(document.createTextNode(child))
+      else if (child) node.appendChild(child)
+    }
+    return node
+  }
+
+  require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.46.0/min/vs' } })
+  require(['vs/editor/editor.main'], () => {
+    editor = monaco.editor.create(document.getElementById('monaco'), {
+      value: '',
+      language: 'html',
+      theme: 'vs-dark',
+      fontSize: 13,
+      minimap: { enabled: false },
+      scrollBeyondLastLine: false,
+      wordWrap: 'on',
+      automaticLayout: true,
+    })
+  })
+
+  async function loadProjects() {
+    const res = await fetch('/api/projects')
+    renderSidebar(await res.json())
+  }
+
+  function renderSidebar(projects) {
+    const list = document.getElementById('proj-list')
+    list.textContent = ''
+    if (!projects.length) {
+      list.appendChild(el('div', { style: 'padding:14px;font-size:12px;color:var(--dim)' }, 'Brak projektów'))
+      return
+    }
+    for (const p of projects) {
+      const nameSpan = el('span', { className: 'proj-name' }, '📁 ' + p.slug)
+      const link = el('a', { className: 'proj-link', href: '/' + p.slug, target: '_blank' }, '↗')
+      link.addEventListener('click', e => e.stopPropagation())
+      const item = el('div', { className: 'proj-item' + (currentProject?.slug === p.slug ? ' active' : '') })
+      item.appendChild(nameSpan)
+      item.appendChild(link)
+      item.addEventListener('click', () => selectProject(p.slug))
+      list.appendChild(item)
+    }
+  }
+
+  async function selectProject(slug) {
+    const res = await fetch('/api/projects/' + slug)
+    if (!res.ok) { toast('Błąd ładowania projektu', 'err'); return }
+    currentProject = await res.json()
+    currentFile = null
+
+    document.getElementById('empty').style.display = 'none'
+    document.getElementById('editor-wrap').style.display = 'flex'
+    document.getElementById('project-title').textContent = slug
+    const chip = document.getElementById('url-chip')
+    chip.textContent = '/' + slug
+    chip.style.display = 'inline'
+    document.getElementById('btn-save').style.display = 'inline-block'
+    document.getElementById('btn-del').style.display = 'inline-block'
+    document.getElementById('preview-frame').src = '/' + slug + '?_=' + Date.now()
+    document.getElementById('preview-link').href = '/' + slug
+
+    renderFileTree()
+    await loadProjects()
+    const first = currentProject.files.find(f => f.name === 'index.html') || currentProject.files[0]
+    if (first) selectFile(first.name)
+  }
+
+  function renderFileTree() {
+    const icons = { html: '📄', css: '🎨', js: '⚡', json: '{}', svg: '🖼', txt: '📝' }
+    const list = document.getElementById('file-list')
+    list.textContent = ''
+    for (const f of currentProject.files) {
+      const ext = f.name.split('.').pop()
+      const item = el('div', { className: 'file-item' + (currentFile === f.name ? ' active' : '') }, (icons[ext] || '📄') + ' ' + f.name)
+      item.addEventListener('click', () => selectFile(f.name))
+      list.appendChild(item)
+    }
+  }
+
+  function selectFile(name) {
+    currentFile = name
+    const f = currentProject.files.find(x => x.name === name)
+    if (!f || !editor) return
+    const ext = name.split('.').pop()
+    const langs = { html: 'html', css: 'css', js: 'javascript', ts: 'typescript', json: 'json', svg: 'xml', md: 'markdown' }
+    monaco.editor.setModelLanguage(editor.getModel(), langs[ext] || 'plaintext')
+    editor.setValue(f.content)
+    renderFileTree()
+  }
+
+  async function saveFile() {
+    if (!currentProject || !currentFile || !editor) return
+    const content = editor.getValue()
+    const res = await fetch('/api/projects/' + currentProject.slug, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: currentFile, content })
+    })
+    if (!res.ok) { toast('Błąd zapisu', 'err'); return }
+    const f = currentProject.files.find(x => x.name === currentFile)
+    if (f) f.content = content
+    document.getElementById('preview-frame').src = '/' + currentProject.slug + '?_=' + Date.now()
+    toast('Zapisano ✓', 'ok')
+  }
+
+  async function applyAI() {
+    if (!currentProject || !currentFile || !editor) return
+    const instruction = document.getElementById('ai-input').value.trim()
+    if (!instruction) { toast('Wpisz instrukcję', 'err'); return }
+    const btn = document.getElementById('btn-ai')
+    btn.textContent = '⏳...'
+    btn.disabled = true
+    try {
+      const res = await fetch('/api/ai/edit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: editor.getValue(), instruction, filename: currentFile })
+      })
+      const data = await res.json()
+      if (data.result) {
+        editor.setValue(data.result)
+        document.getElementById('ai-input').value = ''
+        toast('AI zastosowało zmiany ✓', 'ok')
+      }
+    } catch { toast('Błąd AI', 'err') }
+    finally { btn.textContent = '✨ AI'; btn.disabled = false }
+  }
+
+  async function deleteProject() {
+    if (!currentProject || !confirm('Usunąć "' + currentProject.slug + '"?')) return
+    await fetch('/api/projects/' + currentProject.slug, { method: 'DELETE' })
+    currentProject = null
+    document.getElementById('empty').style.display = 'flex'
+    document.getElementById('editor-wrap').style.display = 'none'
+    document.getElementById('project-title').textContent = 'admin'
+    document.getElementById('url-chip').style.display = 'none'
+    document.getElementById('btn-save').style.display = 'none'
+    document.getElementById('btn-del').style.display = 'none'
+    await loadProjects()
+    toast('Projekt usunięty', 'ok')
+  }
+
+  function openModal() { document.getElementById('modal').classList.add('open'); document.getElementById('new-slug').focus() }
+  function closeModal() {
+    document.getElementById('modal').classList.remove('open')
+    document.getElementById('new-slug').value = ''
+    document.getElementById('new-html').value = ''
+    document.getElementById('slug-preview').textContent = '...'
+  }
+  function slugPreview() { document.getElementById('slug-preview').textContent = document.getElementById('new-slug').value || '...' }
+  function switchTab(tab) {
+    activeTab = tab
+    document.getElementById('tab-paste-btn').classList.toggle('active', tab === 'paste')
+    document.getElementById('tab-upload-btn').classList.toggle('active', tab === 'upload')
+    document.getElementById('pane-paste').classList.toggle('active', tab === 'paste')
+    document.getElementById('pane-upload').classList.toggle('active', tab === 'upload')
+  }
+
+  async function createProject() {
+    const slug = document.getElementById('new-slug').value.trim().toLowerCase().replace(/\s+/g, '-')
+    if (!slug) { toast('Wpisz slug', 'err'); return }
+    const btn = document.getElementById('btn-create')
+    btn.disabled = true; btn.textContent = 'Tworzę...'
+    try {
+      if (activeTab === 'paste') {
+        const html = document.getElementById('new-html').value.trim()
+        if (!html) { toast('Wklej HTML', 'err'); return }
+        const res = await fetch('/api/projects/paste', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slug, html })
+        })
+        if (!res.ok) { const e = await res.json(); throw new Error(e.error) }
+      } else {
+        const file = document.getElementById('new-zip').files[0]
+        if (!file) { toast('Wybierz ZIP', 'err'); return }
+        const fd = new FormData()
+        fd.append('slug', slug)
+        fd.append('file', file)
+        const res = await fetch('/api/projects/upload', { method: 'POST', body: fd })
+        if (!res.ok) throw new Error('Upload failed')
+      }
+      closeModal()
+      await selectProject(slug)
+      toast('Projekt "' + slug + '" gotowy ✓', 'ok')
+    } catch (e) {
+      toast(e.message || 'Błąd', 'err')
+    } finally { btn.disabled = false; btn.textContent = 'Utwórz →' }
+  }
+
+  let toastTimer
+  function toast(msg, type) {
+    const el2 = document.getElementById('toast')
+    el2.textContent = msg
+    el2.className = 'toast show' + (type ? ' ' + type : '')
+    clearTimeout(toastTimer)
+    toastTimer = setTimeout(() => el2.classList.remove('show'), 2800)
+  }
+
+  document.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); saveFile() }
+    if (e.key === 'Escape') closeModal()
+  })
+  document.getElementById('ai-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); applyAI() }
+  })
+
+  loadProjects()
+</script>
+</body>
+</html>

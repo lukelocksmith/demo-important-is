@@ -1,0 +1,14 @@
+{
+  "name": "demo-app",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "start": "bun src/index.ts"
+  },
+  "dependencies": {
+    "hono": "^4.7.4",
+    "@anthropic-ai/sdk": "^0.36.3",
+    "jszip": "^3.10.1"
+  }
+}

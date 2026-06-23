@@ -2,9 +2,11 @@ FROM oven/bun:1-alpine
 WORKDIR /app
 
 COPY package.json ./
-RUN bun install --production
+RUN bun install
 
 COPY src/ ./src/
+
+RUN bun build src/siteping-init.ts --outfile dist/siteping.js --target browser --minify
 
 VOLUME ["/data"]
 EXPOSE 3000

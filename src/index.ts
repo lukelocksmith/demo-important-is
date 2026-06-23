@@ -49,100 +49,98 @@ function hashPwd(password: string, slug: string): string {
   return createHash('sha256').update(`${password}:${slug}:demo-is`).digest('hex')
 }
 
-// ── Comments ──────────────────────────────────────────────────────────────────
+// ── SitePing data model ───────────────────────────────────────────────────────
 
-interface Comment { id: string; x: number; y: number; text: string; createdAt: string; resolved: boolean }
+interface CommentAI { category: string; suggestion: string; priority: string }
 
-function getComments(slug: string): Comment[] {
-  const p = join(DATA_DIR, slug, '_comments.json')
+interface SitepingAnnotation {
+  id: string; feedbackId: string
+  cssSelector: string; xpath: string; textSnippet: string
+  elementTag: string; elementId?: string | null
+  textPrefix: string; textSuffix: string; fingerprint: string
+  neighborText: string; anchorKey?: string | null
+  xPct: number; yPct: number; wPct: number; hPct: number
+  scrollX: number; scrollY: number; viewportW: number; viewportH: number; devicePixelRatio: number
+  createdAt: string
+}
+
+interface SitepingFeedback {
+  id: string; projectName: string
+  type: 'question' | 'change' | 'bug' | 'other'
+  message: string; status: 'open' | 'resolved'
+  url: string; urlPattern: string | null
+  authorName: string; authorEmail: string
+  viewport: string; userAgent: string; clientId: string
+  resolvedAt: string | null; createdAt: string; updatedAt: string
+  annotations: SitepingAnnotation[]
+  screenshotUrl: string | null; diagnostics: unknown | null
+  aiAnalysis?: CommentAI
+}
+
+function getFeedbacks(slug: string): SitepingFeedback[] {
+  const p = join(DATA_DIR, slug, '_feedbacks.json')
   if (!existsSync(p)) return []
   try { return JSON.parse(readFileSync(p, 'utf-8')) } catch { return [] }
 }
 
-function saveComments(slug: string, comments: Comment[]) {
-  writeFileSync(join(DATA_DIR, slug, '_comments.json'), JSON.stringify(comments), 'utf-8')
+function saveFeedbacks(slug: string, feedbacks: SitepingFeedback[]) {
+  writeFileSync(join(DATA_DIR, slug, '_feedbacks.json'), JSON.stringify(feedbacks), 'utf-8')
 }
 
-// ── Annotation script (injected into every served page) ───────────────────────
+// Maps SitePing feedback to the format the admin panel expects
+function feedbackToAdminComment(f: SitepingFeedback) {
+  const ann = f.annotations[0]
+  return {
+    id: f.id,
+    x: ann?.xPct ?? 0.5,
+    y: ann?.yPct ?? 0.5,
+    text: f.message,
+    type: f.type,
+    author: f.authorName,
+    createdAt: f.createdAt,
+    resolved: f.status === 'resolved',
+    selector: ann?.cssSelector,
+    xpath: ann?.xpath,
+    elementText: ann?.textSnippet,
+    tagName: ann?.elementTag?.toLowerCase(),
+    aiAnalysis: f.aiAnalysis,
+  }
+}
 
-const ANNOTATION_JS = `(function(){
-'use strict';
-if(document.getElementById('__da'))return;
-var SL='__SLUG__',BA=location.origin,mode=false,pins=[];
-var st=document.createElement('style');
-st.textContent='#__da{position:fixed;bottom:20px;right:20px;z-index:999999;font-family:-apple-system,sans-serif}'
-+'#__dab{width:42px;height:42px;border-radius:50%;background:#1e1e2e;border:2px solid #45475a;color:#cdd6f4;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,.4);transition:all .2s}'
-+'#__dab:hover{background:#313244}#__dab.on{background:#89b4fa;color:#1e1e2e;border-color:#89b4fa}'
-+'.__dp{position:fixed;width:26px;height:26px;border-radius:50% 50% 50% 0;background:#89b4fa;color:#1e1e2e;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;transform:rotate(-45deg) translate(-50%,-50%);cursor:pointer;z-index:999990;box-shadow:0 2px 8px rgba(0,0,0,.3)}'
-+'.__dp:hover{filter:brightness(1.15)}.__dp span{transform:rotate(45deg);display:block}'
-+'.__dpp{position:fixed;background:#1e1e2e;border:1px solid #313244;border-radius:10px;padding:12px;width:240px;z-index:999999;box-shadow:0 8px 24px rgba(0,0,0,.5)}'
-+'.__dpp textarea{width:100%;background:#313244;border:1px solid #45475a;border-radius:6px;color:#cdd6f4;padding:8px;font-size:13px;resize:none;height:80px;outline:none;box-sizing:border-box;font-family:inherit}'
-+'.__dpp textarea:focus{border-color:#89b4fa}.__dff{display:flex;gap:6px;margin-top:8px}'
-+'.__dff button{flex:1;padding:6px;border-radius:6px;border:none;font-size:12px;cursor:pointer;font-weight:500}'
-+'.__ds{background:#89b4fa;color:#1e1e2e}.__ds:hover{background:#74c7ec}.__dc{background:#313244;color:#cdd6f4}'
-+'.__tip{position:fixed;background:#1e1e2e;border:1px solid #313244;border-radius:8px;padding:8px 12px;max-width:200px;font-size:12px;color:#cdd6f4;z-index:999998;pointer-events:none;box-shadow:0 4px 12px rgba(0,0,0,.3)}'
-+'body.__cx,body.__cx *{cursor:crosshair!important}';
-document.head.appendChild(st);
-var ui=document.createElement('div');ui.id='__da';
-var btn=document.createElement('button');btn.id='__dab';btn.title='Dodaj komentarz';btn.textContent='💬';
-ui.appendChild(btn);document.body.appendChild(ui);
-btn.addEventListener('click',function(e){e.stopPropagation();mode=!mode;btn.classList.toggle('on',mode);document.body.classList.toggle('__cx',mode);});
-document.addEventListener('click',function(e){
-  if(!mode)return;
-  if(e.target.closest('#__da')||e.target.closest('.__dpp'))return;
-  var x=e.clientX/window.innerWidth,y=e.clientY/window.innerHeight;
-  mode=false;btn.classList.remove('on');document.body.classList.remove('__cx');
-  showInput(e.clientX,e.clientY,x,y);
-},true);
-function showInput(ax,ay,rx,ry){
-  document.querySelectorAll('.__dpp').forEach(function(el){el.remove();});
-  var pop=document.createElement('div');pop.className='__dpp';
-  var l=ax+12,t=ay+12;
-  if(l+250>window.innerWidth)l=ax-260;
-  if(t+150>window.innerHeight)t=ay-160;
-  pop.style.left=l+'px';pop.style.top=t+'px';
-  var ta=document.createElement('textarea');ta.placeholder='Opisz co chcesz zmienić...';
-  var ff=document.createElement('div');ff.className='__dff';
-  var sb=document.createElement('button');sb.className='__ds';sb.textContent='Wyślij ↵';
-  var cb=document.createElement('button');cb.className='__dc';cb.textContent='Anuluj';
-  ff.appendChild(sb);ff.appendChild(cb);pop.appendChild(ta);pop.appendChild(ff);
-  document.body.appendChild(pop);ta.focus();
-  sb.addEventListener('click',function(){
-    var txt=ta.value.trim();if(!txt)return;
-    sb.textContent='...';sb.disabled=true;
-    fetch(BA+'/comment/'+SL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({x:rx,y:ry,text:txt})})
-      .then(function(){pop.remove();load();}).catch(function(){sb.textContent='Wyślij ↵';sb.disabled=false;});
-  });
-  cb.addEventListener('click',function(){pop.remove();});
-  ta.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sb.click();}if(e.key==='Escape')pop.remove();});
-}
-function renderPins(){
-  document.querySelectorAll('.__dp,.__tip').forEach(function(el){el.remove();});
-  var n=0;
-  pins.forEach(function(c){
-    if(c.resolved)return;n++;
-    var pin=document.createElement('div');pin.className='__dp';
-    pin.style.left=(c.x*window.innerWidth)+'px';pin.style.top=(c.y*window.innerHeight)+'px';
-    var sp=document.createElement('span');sp.textContent=n;pin.appendChild(sp);
-    var tip=null;
-    pin.addEventListener('mouseenter',function(){
-      tip=document.createElement('div');tip.className='__tip';tip.textContent=c.text;
-      tip.style.left=(c.x*window.innerWidth+20)+'px';tip.style.top=(c.y*window.innerHeight)+'px';
-      document.body.appendChild(tip);
-    });
-    pin.addEventListener('mouseleave',function(){if(tip){tip.remove();tip=null;}});
-    document.body.appendChild(pin);
-  });
-}
-function load(){
-  fetch(BA+'/comments/'+SL).then(function(r){return r.json();}).then(function(d){pins=d;renderPins();}).catch(function(){});
-}
-window.addEventListener('resize',renderPins);
-load();
-})();`
+// ── AI analysis ───────────────────────────────────────────────────────────────
 
-function injectScript(html: string, slug: string): string {
-  const script = `<script>${ANNOTATION_JS.replace(/__SLUG__/g, slug)}</script>`
+async function analyzeFeedback(feedback: SitepingFeedback): Promise<CommentAI | undefined> {
+  try {
+    const ann = feedback.annotations[0]
+    const ctx = [
+      ann?.elementTag   && `Tag: <${ann.elementTag}>`,
+      ann?.cssSelector  && `Selector: ${ann.cssSelector}`,
+      ann?.textSnippet  && `Text: "${ann.textSnippet}"`,
+      feedback.type     && `Category: ${feedback.type}`,
+      feedback.url      && `URL: ${feedback.url}`,
+    ].filter(Boolean).join('\n')
+
+    const response = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 300,
+      messages: [{
+        role: 'user',
+        content: `Analyze this client feedback on a web prototype. Reply with JSON only.\n\nFeedback: "${feedback.message}"\n${ctx ? 'Context:\n' + ctx : ''}\n\n{"category":"design|copy|ux|bug|layout|other","suggestion":"short actionable fix","priority":"low|medium|high"}`,
+      }],
+    })
+
+    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    const match = text.match(/\{[\s\S]*?\}/)
+    return match ? JSON.parse(match[0]) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// ── SitePing widget injection ─────────────────────────────────────────────────
+
+function injectSitePing(html: string, slug: string): string {
+  const script = `<script src="/siteping.js"></script><script>initDemoSiteping(${JSON.stringify(slug)})</script>`
   return html.includes('</body>') ? html.replace('</body>', script + '</body>') : html + script
 }
 
@@ -159,6 +157,16 @@ function lockPage(slug: string, error = false): string {
 // ── Auth ───────────────────────────────────────────────────────────────────────
 
 const auth = basicAuth({ username: 'admin', password: ADMIN_PASSWORD })
+
+// ── SitePing widget bundle ────────────────────────────────────────────────────
+
+const SITEPING_BUNDLE_PATH = join(import.meta.dir, '..', 'dist', 'siteping.js')
+
+app.get('/siteping.js', (c) => {
+  if (!existsSync(SITEPING_BUNDLE_PATH)) return c.text('Bundle not found — run: bun build src/siteping-init.ts --outfile dist/siteping.js --target browser', 503)
+  const content = readFileSync(SITEPING_BUNDLE_PATH)
+  return new Response(content, { headers: { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=3600' } })
+})
 
 // ── Admin panel ───────────────────────────────────────────────────────────────
 
@@ -191,37 +199,126 @@ app.post('/:slug/_unlock', async (c) => {
   return c.redirect('/' + slug)
 })
 
-// ── Public: add comment (called from annotation script on client page) ─────────
+// ── SitePing public API ───────────────────────────────────────────────────────
 
-app.post('/comment/:slug', async (c) => {
+app.post('/sp/feedback/:slug', async (c) => {
   const { slug } = c.req.param()
   if (!validSlug(slug)) return c.json({ error: 'Not found' }, 404)
   if (!existsSync(join(DATA_DIR, slug))) return c.json({ error: 'Not found' }, 404)
 
-  const { x, y, text } = await c.req.json()
-  if (!text || typeof x !== 'number' || typeof y !== 'number') return c.json({ error: 'Invalid' }, 400)
+  const data = await c.req.json() as Omit<SitepingFeedback, 'id' | 'createdAt' | 'updatedAt'>
 
-  const comments = getComments(slug)
-  const comment: Comment = {
-    id: randomUUID(),
-    x: Math.min(Math.max(x, 0), 1),
-    y: Math.min(Math.max(y, 0), 1),
-    text: String(text).slice(0, 1000),
-    createdAt: new Date().toISOString(),
-    resolved: false,
+  // Idempotency: return existing on duplicate clientId
+  if (data.clientId) {
+    const existing = getFeedbacks(slug).find(f => f.clientId === data.clientId)
+    if (existing) return c.json(existing)
   }
-  comments.push(comment)
-  saveComments(slug, comments)
-  return c.json({ ok: true, id: comment.id })
+
+  const now = new Date().toISOString()
+  const feedbackId = randomUUID()
+  const feedback: SitepingFeedback = {
+    id: feedbackId,
+    projectName: slug,
+    type: data.type ?? 'other',
+    message: String(data.message ?? '').slice(0, 5000),
+    status: 'open',
+    url: String(data.url ?? ''),
+    urlPattern: data.urlPattern ?? null,
+    authorName: String(data.authorName ?? 'Client').slice(0, 200),
+    authorEmail: String(data.authorEmail ?? 'client@demo.important.is').slice(0, 200),
+    viewport: String(data.viewport ?? ''),
+    userAgent: String(data.userAgent ?? ''),
+    clientId: String(data.clientId ?? randomUUID()),
+    resolvedAt: null,
+    createdAt: now,
+    updatedAt: now,
+    annotations: (data.annotations ?? []).map((ann: SitepingAnnotation) => ({
+      ...ann,
+      id: ann.id ?? randomUUID(),
+      feedbackId,
+      createdAt: ann.createdAt ?? now,
+    })),
+    screenshotUrl: data.screenshotUrl ?? null,
+    diagnostics: data.diagnostics ?? null,
+  }
+
+  const feedbacks = getFeedbacks(slug)
+  feedbacks.push(feedback)
+  saveFeedbacks(slug, feedbacks)
+
+  // AI analysis in background
+  analyzeFeedback(feedback).then(ai => {
+    if (!ai) return
+    const all = getFeedbacks(slug)
+    const target = all.find(f => f.id === feedback.id)
+    if (target) { target.aiAnalysis = ai; saveFeedbacks(slug, all) }
+  }).catch(() => {})
+
+  return c.json(feedback, 201)
 })
 
-// ── Public: get active comments (loaded by annotation script) ─────────────────
-
-app.get('/comments/:slug', (c) => {
+app.get('/sp/feedbacks/:slug', (c) => {
   const { slug } = c.req.param()
-  if (!validSlug(slug)) return c.json([])
-  const comments = getComments(slug).filter(cm => !cm.resolved)
-  return c.json(comments)
+  if (!validSlug(slug)) return c.json({ feedbacks: [], total: 0 })
+
+  let feedbacks = getFeedbacks(slug)
+  const status = c.req.query('status')
+  const type = c.req.query('type')
+  const search = c.req.query('search')
+  if (status) feedbacks = feedbacks.filter(f => f.status === status)
+  if (type) feedbacks = feedbacks.filter(f => f.type === type)
+  if (search) feedbacks = feedbacks.filter(f => f.message.toLowerCase().includes(search.toLowerCase()))
+
+  const page = Math.max(1, Number(c.req.query('page') ?? 1))
+  const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 50)))
+  const total = feedbacks.length
+  const paged = feedbacks.slice((page - 1) * limit, page * limit)
+
+  return c.json({ feedbacks: paged, total })
+})
+
+app.get('/sp/feedback/:slug/client/:clientId', (c) => {
+  const { slug, clientId } = c.req.param()
+  if (!validSlug(slug)) return c.json(null, 404)
+
+  const feedback = getFeedbacks(slug).find(f => f.clientId === decodeURIComponent(clientId))
+  return feedback ? c.json(feedback) : c.json(null, 404)
+})
+
+app.patch('/sp/feedback/:slug/:id', async (c) => {
+  const { slug, id } = c.req.param()
+  if (!validSlug(slug)) return c.json({ error: 'Not found' }, 404)
+
+  const { status, resolvedAt } = await c.req.json()
+  const feedbacks = getFeedbacks(slug)
+  const feedback = feedbacks.find(f => f.id === id)
+  if (!feedback) return c.json({ error: 'Not found' }, 404)
+
+  feedback.status = status ?? feedback.status
+  feedback.resolvedAt = resolvedAt ?? feedback.resolvedAt
+  feedback.updatedAt = new Date().toISOString()
+  saveFeedbacks(slug, feedbacks)
+  return c.json(feedback)
+})
+
+app.delete('/sp/feedback/:slug/:id', (c) => {
+  const { slug, id } = c.req.param()
+  if (!validSlug(slug)) return c.json({ error: 'Not found' }, 404)
+
+  const feedbacks = getFeedbacks(slug)
+  const idx = feedbacks.findIndex(f => f.id === id)
+  if (idx === -1) return c.json({ error: 'Not found' }, 404)
+
+  feedbacks.splice(idx, 1)
+  saveFeedbacks(slug, feedbacks)
+  return new Response(null, { status: 204 })
+})
+
+app.delete('/sp/feedbacks/:slug', (c) => {
+  const { slug } = c.req.param()
+  if (!validSlug(slug)) return c.json({ error: 'Not found' }, 404)
+  saveFeedbacks(slug, [])
+  return new Response(null, { status: 204 })
 })
 
 // ── Protected API ─────────────────────────────────────────────────────────────
@@ -236,12 +333,12 @@ app.get('/api/projects', (c) => {
       const files = readdirSync(join(DATA_DIR, d.name))
         .filter(f => !f.startsWith('_'))
         .filter(f => { try { return statSync(join(DATA_DIR, d.name, f)).isFile() } catch { return false } })
-      const comments = getComments(d.name)
+      const feedbacks = getFeedbacks(d.name)
       const meta = getMeta(d.name)
       return {
         slug: d.name,
         files,
-        commentCount: comments.filter(cm => !cm.resolved).length,
+        commentCount: feedbacks.filter(f => f.status === 'open').length,
         hasPassword: !!meta.password,
       }
     })
@@ -354,12 +451,12 @@ app.patch('/api/projects/:slug/settings', async (c) => {
   return c.json({ ok: true, hasPassword: !!meta.password })
 })
 
-// ── Comments (admin) ──────────────────────────────────────────────────────────
+// ── Comments admin API (maps SitePing feedbacks to old comment format) ────────
 
 app.get('/api/projects/:slug/comments', (c) => {
   const { slug } = c.req.param()
   if (!validSlug(slug)) return c.json({ error: 'Invalid slug' }, 400)
-  return c.json(getComments(slug))
+  return c.json(getFeedbacks(slug).map(feedbackToAdminComment))
 })
 
 app.patch('/api/projects/:slug/comments/:id', async (c) => {
@@ -367,12 +464,14 @@ app.patch('/api/projects/:slug/comments/:id', async (c) => {
   if (!validSlug(slug)) return c.json({ error: 'Invalid slug' }, 400)
 
   const { resolved } = await c.req.json()
-  const comments = getComments(slug)
-  const comment = comments.find(cm => cm.id === id)
-  if (!comment) return c.json({ error: 'Not found' }, 404)
+  const feedbacks = getFeedbacks(slug)
+  const feedback = feedbacks.find(f => f.id === id)
+  if (!feedback) return c.json({ error: 'Not found' }, 404)
 
-  comment.resolved = Boolean(resolved)
-  saveComments(slug, comments)
+  feedback.status = resolved ? 'resolved' : 'open'
+  feedback.resolvedAt = resolved ? new Date().toISOString() : null
+  feedback.updatedAt = new Date().toISOString()
+  saveFeedbacks(slug, feedbacks)
   return c.json({ ok: true })
 })
 
@@ -380,8 +479,8 @@ app.delete('/api/projects/:slug/comments/:id', (c) => {
   const { slug, id } = c.req.param()
   if (!validSlug(slug)) return c.json({ error: 'Invalid slug' }, 400)
 
-  const comments = getComments(slug).filter(cm => cm.id !== id)
-  saveComments(slug, comments)
+  const feedbacks = getFeedbacks(slug).filter(f => f.id !== id)
+  saveFeedbacks(slug, feedbacks)
   return c.json({ ok: true })
 })
 
@@ -427,7 +526,6 @@ app.get('/:slug', (c) => {
   const indexPath = join(DATA_DIR, slug, 'index.html')
   if (!existsSync(indexPath)) return c.text('Project not found', 404)
 
-  // Password check
   const meta = getMeta(slug)
   if (meta.password) {
     const cookie = getCookie(c, `demo_${slug}`)
@@ -435,14 +533,13 @@ app.get('/:slug', (c) => {
   }
 
   const html = readFileSync(indexPath, 'utf-8')
-  return c.html(injectScript(html, slug))
+  return c.html(injectSitePing(html, slug))
 })
 
 app.get('/:slug/:filename{.+}', (c) => {
   const { slug, filename } = c.req.param()
   if (!validSlug(slug)) return c.text('Not found', 404)
 
-  // Password check for sub-files too
   const meta = getMeta(slug)
   if (meta.password) {
     const cookie = getCookie(c, `demo_${slug}`)

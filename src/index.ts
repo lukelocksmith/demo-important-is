@@ -53,6 +53,9 @@ function hashPwd(password: string, slug: string): string {
 
 interface CommentAI { category: string; suggestion: string; priority: string }
 
+// Stored/returned annotation — FLAT shape, matching SitePing's `AnnotationResponse`.
+// The widget reads anchor + rect fields at the top level (see @siteping/widget
+// markers.ts -> toAnchorData/toRectData), so they must NOT stay nested.
 interface SitepingAnnotation {
   id: string; feedbackId: string
   cssSelector: string; xpath: string; textSnippet: string
@@ -62,6 +65,50 @@ interface SitepingAnnotation {
   xPct: number; yPct: number; wPct: number; hPct: number
   scrollX: number; scrollY: number; viewportW: number; viewportH: number; devicePixelRatio: number
   createdAt: string
+}
+
+// The widget POSTs annotations in a NESTED wire shape: { anchor: {...}, rect: {...}, scrollX, ... }
+// (see @siteping/widget AnnotationPayload). The server must flatten it before storing,
+// exactly like @siteping/widget's StoreClient does via `flattenAnnotation`.
+interface AnnotationPayload {
+  anchor?: {
+    cssSelector?: string; xpath?: string; textSnippet?: string; elementTag?: string
+    elementId?: string | null; textPrefix?: string; textSuffix?: string
+    fingerprint?: string; neighborText?: string; anchorKey?: string | null
+  }
+  rect?: { xPct?: number; yPct?: number; wPct?: number; hPct?: number }
+  scrollX?: number; scrollY?: number; viewportW?: number; viewportH?: number; devicePixelRatio?: number
+}
+
+// Flatten a (possibly already-flat) annotation payload into the stored flat shape.
+// Tolerates both the nested widget wire shape and the flat shape (idempotent).
+function flattenAnnotation(ann: AnnotationPayload & Partial<SitepingAnnotation>, feedbackId: string, now: string): SitepingAnnotation {
+  const a = ann.anchor ?? {}
+  const r = ann.rect ?? {}
+  return {
+    id: ann.id ?? randomUUID(),
+    feedbackId,
+    cssSelector: a.cssSelector ?? ann.cssSelector ?? '',
+    xpath: a.xpath ?? ann.xpath ?? '',
+    textSnippet: a.textSnippet ?? ann.textSnippet ?? '',
+    elementTag: a.elementTag ?? ann.elementTag ?? '',
+    elementId: a.elementId ?? ann.elementId ?? null,
+    textPrefix: a.textPrefix ?? ann.textPrefix ?? '',
+    textSuffix: a.textSuffix ?? ann.textSuffix ?? '',
+    fingerprint: a.fingerprint ?? ann.fingerprint ?? '',
+    neighborText: a.neighborText ?? ann.neighborText ?? '',
+    anchorKey: a.anchorKey ?? ann.anchorKey ?? null,
+    xPct: r.xPct ?? ann.xPct ?? 0,
+    yPct: r.yPct ?? ann.yPct ?? 0,
+    wPct: r.wPct ?? ann.wPct ?? 0,
+    hPct: r.hPct ?? ann.hPct ?? 0,
+    scrollX: ann.scrollX ?? 0,
+    scrollY: ann.scrollY ?? 0,
+    viewportW: ann.viewportW ?? 0,
+    viewportH: ann.viewportH ?? 0,
+    devicePixelRatio: ann.devicePixelRatio ?? 1,
+    createdAt: ann.createdAt ?? now,
+  }
 }
 
 interface SitepingFeedback {
@@ -87,9 +134,64 @@ function saveFeedbacks(slug: string, feedbacks: SitepingFeedback[]) {
   writeFileSync(join(DATA_DIR, slug, '_feedbacks.json'), JSON.stringify(feedbacks), 'utf-8')
 }
 
+// Maps a stored feedback to the exact `FeedbackResponse` shape the widget reads back.
+// The stored record is already flat, so this is mostly a passthrough that drops the
+// internal `aiAnalysis` field and guarantees a stable field set.
+function toFeedbackResponse(f: SitepingFeedback) {
+  return {
+    id: f.id,
+    projectName: f.projectName,
+    type: f.type,
+    message: f.message,
+    status: f.status,
+    url: f.url,
+    urlPattern: f.urlPattern ?? null,
+    viewport: f.viewport,
+    userAgent: f.userAgent,
+    authorName: f.authorName,
+    authorEmail: f.authorEmail,
+    resolvedAt: f.resolvedAt ?? null,
+    createdAt: f.createdAt,
+    updatedAt: f.updatedAt,
+    // Flatten on read too, so legacy records persisted in the nested wire shape
+    // ({ anchor, rect, ... }) are normalised to the flat AnnotationResponse the widget expects.
+    annotations: (f.annotations ?? []).map(raw => {
+      const a = flattenAnnotation(raw as AnnotationPayload & Partial<SitepingAnnotation>, f.id, f.createdAt)
+      return {
+        id: a.id,
+        feedbackId: a.feedbackId,
+        cssSelector: a.cssSelector,
+        xpath: a.xpath,
+        textSnippet: a.textSnippet,
+        elementTag: a.elementTag,
+        elementId: a.elementId ?? null,
+        textPrefix: a.textPrefix,
+        textSuffix: a.textSuffix,
+        fingerprint: a.fingerprint,
+        neighborText: a.neighborText,
+        anchorKey: a.anchorKey ?? null,
+        xPct: a.xPct,
+        yPct: a.yPct,
+        wPct: a.wPct,
+        hPct: a.hPct,
+        scrollX: a.scrollX,
+        scrollY: a.scrollY,
+        viewportW: a.viewportW,
+        viewportH: a.viewportH,
+        devicePixelRatio: a.devicePixelRatio,
+        createdAt: a.createdAt,
+      }
+    }),
+    screenshotUrl: f.screenshotUrl ?? null,
+    diagnostics: f.diagnostics ?? null,
+  }
+}
+
 // Maps SitePing feedback to the format the admin panel expects
 function feedbackToAdminComment(f: SitepingFeedback) {
-  const ann = f.annotations[0]
+  const raw = f.annotations[0]
+  // Flatten to tolerate both flat and legacy nested annotation shapes.
+  const ann = raw ? flattenAnnotation(raw as AnnotationPayload & Partial<SitepingAnnotation>, f.id, f.createdAt) : undefined
   return {
     id: f.id,
     x: ann?.xPct ?? 0.5,
@@ -216,11 +318,15 @@ app.get('/sp/:slug', (c) => {
   if (type) feedbacks = feedbacks.filter(f => f.type === type)
   if (search) feedbacks = feedbacks.filter(f => f.message.toLowerCase().includes(search.toLowerCase()))
 
+  // The widget filters by exact URL ("this page" scope) — honour the `url` query.
+  const url = c.req.query('url')
+  if (url) feedbacks = feedbacks.filter(f => f.url === url)
+
   const page = Math.max(1, Number(c.req.query('page') ?? 1))
   const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 50)))
   const total = feedbacks.length
   const paged = feedbacks.slice((page - 1) * limit, page * limit)
-  return c.json({ feedbacks: paged, total })
+  return c.json({ feedbacks: paged.map(toFeedbackResponse), total })
 })
 
 app.post('/sp/:slug', async (c) => {
@@ -228,11 +334,16 @@ app.post('/sp/:slug', async (c) => {
   if (!validSlug(slug)) return c.json({ error: 'Not found' }, 404)
   if (!existsSync(join(DATA_DIR, slug))) return c.json({ error: 'Not found' }, 404)
 
-  const data = await c.req.json() as Omit<SitepingFeedback, 'id' | 'createdAt' | 'updatedAt'> & { screenshotDataUrl?: string }
+  const data = await c.req.json() as Omit<SitepingFeedback, 'id' | 'createdAt' | 'updatedAt' | 'annotations'> & {
+    annotations?: (AnnotationPayload & Partial<SitepingAnnotation>)[]
+    screenshotDataUrl?: string
+  }
 
+  // Idempotency: the widget reuses one clientId per page load and POSTs once.
+  // Return the existing record (the widget treats this as a successful submit).
   if (data.clientId) {
     const existing = getFeedbacks(slug).find(f => f.clientId === data.clientId)
-    if (existing) return c.json(existing)
+    if (existing) return c.json(toFeedbackResponse(existing))
   }
 
   const now = new Date().toISOString()
@@ -253,12 +364,7 @@ app.post('/sp/:slug', async (c) => {
     resolvedAt: null,
     createdAt: now,
     updatedAt: now,
-    annotations: (data.annotations ?? []).map((ann: SitepingAnnotation) => ({
-      ...ann,
-      id: ann.id ?? randomUUID(),
-      feedbackId,
-      createdAt: ann.createdAt ?? now,
-    })),
+    annotations: (data.annotations ?? []).map(ann => flattenAnnotation(ann, feedbackId, now)),
     screenshotUrl: (data as any).screenshotDataUrl ?? data.screenshotUrl ?? null,
     diagnostics: data.diagnostics ?? null,
   }
@@ -274,7 +380,7 @@ app.post('/sp/:slug', async (c) => {
     if (target) { target.aiAnalysis = ai; saveFeedbacks(slug, all) }
   }).catch(() => {})
 
-  return c.json(feedback, 201)
+  return c.json(toFeedbackResponse(feedback), 201)
 })
 
 app.patch('/sp/:slug', async (c) => {
@@ -290,7 +396,7 @@ app.patch('/sp/:slug', async (c) => {
   feedback.resolvedAt = status === 'resolved' ? new Date().toISOString() : null
   feedback.updatedAt = new Date().toISOString()
   saveFeedbacks(slug, feedbacks)
-  return c.json(feedback)
+  return c.json(toFeedbackResponse(feedback))
 })
 
 app.delete('/sp/:slug', async (c) => {
@@ -313,12 +419,15 @@ app.post('/sp/feedback/:slug', async (c) => {
   if (!validSlug(slug)) return c.json({ error: 'Not found' }, 404)
   if (!existsSync(join(DATA_DIR, slug))) return c.json({ error: 'Not found' }, 404)
 
-  const data = await c.req.json() as Omit<SitepingFeedback, 'id' | 'createdAt' | 'updatedAt'>
+  const data = await c.req.json() as Omit<SitepingFeedback, 'id' | 'createdAt' | 'updatedAt' | 'annotations'> & {
+    annotations?: (AnnotationPayload & Partial<SitepingAnnotation>)[]
+    screenshotDataUrl?: string
+  }
 
   // Idempotency: return existing on duplicate clientId
   if (data.clientId) {
     const existing = getFeedbacks(slug).find(f => f.clientId === data.clientId)
-    if (existing) return c.json(existing)
+    if (existing) return c.json(toFeedbackResponse(existing))
   }
 
   const now = new Date().toISOString()
@@ -339,13 +448,8 @@ app.post('/sp/feedback/:slug', async (c) => {
     resolvedAt: null,
     createdAt: now,
     updatedAt: now,
-    annotations: (data.annotations ?? []).map((ann: SitepingAnnotation) => ({
-      ...ann,
-      id: ann.id ?? randomUUID(),
-      feedbackId,
-      createdAt: ann.createdAt ?? now,
-    })),
-    screenshotUrl: data.screenshotUrl ?? null,
+    annotations: (data.annotations ?? []).map(ann => flattenAnnotation(ann, feedbackId, now)),
+    screenshotUrl: (data as any).screenshotDataUrl ?? data.screenshotUrl ?? null,
     diagnostics: data.diagnostics ?? null,
   }
 
@@ -361,7 +465,7 @@ app.post('/sp/feedback/:slug', async (c) => {
     if (target) { target.aiAnalysis = ai; saveFeedbacks(slug, all) }
   }).catch(() => {})
 
-  return c.json(feedback, 201)
+  return c.json(toFeedbackResponse(feedback), 201)
 })
 
 app.get('/sp/feedbacks/:slug', (c) => {
@@ -381,7 +485,7 @@ app.get('/sp/feedbacks/:slug', (c) => {
   const total = feedbacks.length
   const paged = feedbacks.slice((page - 1) * limit, page * limit)
 
-  return c.json({ feedbacks: paged, total })
+  return c.json({ feedbacks: paged.map(toFeedbackResponse), total })
 })
 
 app.get('/sp/feedback/:slug/client/:clientId', (c) => {
@@ -389,7 +493,7 @@ app.get('/sp/feedback/:slug/client/:clientId', (c) => {
   if (!validSlug(slug)) return c.json(null, 404)
 
   const feedback = getFeedbacks(slug).find(f => f.clientId === decodeURIComponent(clientId))
-  return feedback ? c.json(feedback) : c.json(null, 404)
+  return feedback ? c.json(toFeedbackResponse(feedback)) : c.json(null, 404)
 })
 
 app.patch('/sp/feedback/:slug/:id', async (c) => {
@@ -405,7 +509,7 @@ app.patch('/sp/feedback/:slug/:id', async (c) => {
   feedback.resolvedAt = resolvedAt ?? feedback.resolvedAt
   feedback.updatedAt = new Date().toISOString()
   saveFeedbacks(slug, feedbacks)
-  return c.json(feedback)
+  return c.json(toFeedbackResponse(feedback))
 })
 
 app.delete('/sp/feedback/:slug/:id', (c) => {

@@ -199,7 +199,114 @@ app.post('/:slug/_unlock', async (c) => {
   return c.redirect('/' + slug)
 })
 
-// ── SitePing public API ───────────────────────────────────────────────────────
+// ── SitePing endpoint mode (GET/POST/PATCH/DELETE /sp/:slug) ─────────────────
+// SitePing calls a single URL for all operations when using endpoint: config.
+// Routes are 2-segment (/sp/:slug) so they don't conflict with the 3-segment
+// legacy routes (/sp/feedback/:slug, /sp/feedbacks/:slug) below.
+
+app.get('/sp/:slug', (c) => {
+  const { slug } = c.req.param()
+  if (!validSlug(slug)) return c.json({ feedbacks: [], total: 0 })
+
+  let feedbacks = getFeedbacks(slug)
+  const status = c.req.query('status')
+  const type = c.req.query('type')
+  const search = c.req.query('search')
+  if (status) feedbacks = feedbacks.filter(f => f.status === status)
+  if (type) feedbacks = feedbacks.filter(f => f.type === type)
+  if (search) feedbacks = feedbacks.filter(f => f.message.toLowerCase().includes(search.toLowerCase()))
+
+  const page = Math.max(1, Number(c.req.query('page') ?? 1))
+  const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 50)))
+  const total = feedbacks.length
+  const paged = feedbacks.slice((page - 1) * limit, page * limit)
+  return c.json({ feedbacks: paged, total })
+})
+
+app.post('/sp/:slug', async (c) => {
+  const { slug } = c.req.param()
+  if (!validSlug(slug)) return c.json({ error: 'Not found' }, 404)
+  if (!existsSync(join(DATA_DIR, slug))) return c.json({ error: 'Not found' }, 404)
+
+  const data = await c.req.json() as Omit<SitepingFeedback, 'id' | 'createdAt' | 'updatedAt'> & { screenshotDataUrl?: string }
+
+  if (data.clientId) {
+    const existing = getFeedbacks(slug).find(f => f.clientId === data.clientId)
+    if (existing) return c.json(existing)
+  }
+
+  const now = new Date().toISOString()
+  const feedbackId = randomUUID()
+  const feedback: SitepingFeedback = {
+    id: feedbackId,
+    projectName: slug,
+    type: data.type ?? 'other',
+    message: String(data.message ?? '').slice(0, 5000),
+    status: 'open',
+    url: String(data.url ?? ''),
+    urlPattern: data.urlPattern ?? null,
+    authorName: String(data.authorName ?? 'Client').slice(0, 200),
+    authorEmail: String(data.authorEmail ?? 'client@demo.important.is').slice(0, 200),
+    viewport: String(data.viewport ?? ''),
+    userAgent: String(data.userAgent ?? ''),
+    clientId: String(data.clientId ?? randomUUID()),
+    resolvedAt: null,
+    createdAt: now,
+    updatedAt: now,
+    annotations: (data.annotations ?? []).map((ann: SitepingAnnotation) => ({
+      ...ann,
+      id: ann.id ?? randomUUID(),
+      feedbackId,
+      createdAt: ann.createdAt ?? now,
+    })),
+    screenshotUrl: (data as any).screenshotDataUrl ?? data.screenshotUrl ?? null,
+    diagnostics: data.diagnostics ?? null,
+  }
+
+  const feedbacks = getFeedbacks(slug)
+  feedbacks.push(feedback)
+  saveFeedbacks(slug, feedbacks)
+
+  analyzeFeedback(feedback).then(ai => {
+    if (!ai) return
+    const all = getFeedbacks(slug)
+    const target = all.find(f => f.id === feedback.id)
+    if (target) { target.aiAnalysis = ai; saveFeedbacks(slug, all) }
+  }).catch(() => {})
+
+  return c.json(feedback, 201)
+})
+
+app.patch('/sp/:slug', async (c) => {
+  const { slug } = c.req.param()
+  if (!validSlug(slug)) return c.json({ error: 'Not found' }, 404)
+
+  const { id, status } = await c.req.json()
+  const feedbacks = getFeedbacks(slug)
+  const feedback = feedbacks.find(f => f.id === id)
+  if (!feedback) return c.json({ error: 'Not found' }, 404)
+
+  feedback.status = status ?? feedback.status
+  feedback.resolvedAt = status === 'resolved' ? new Date().toISOString() : null
+  feedback.updatedAt = new Date().toISOString()
+  saveFeedbacks(slug, feedbacks)
+  return c.json(feedback)
+})
+
+app.delete('/sp/:slug', async (c) => {
+  const { slug } = c.req.param()
+  if (!validSlug(slug)) return c.json({ error: 'Not found' }, 404)
+
+  const body = await c.req.json().catch(() => ({})) as { id?: string; deleteAll?: boolean }
+  if (body.deleteAll) {
+    saveFeedbacks(slug, [])
+  } else if (body.id) {
+    saveFeedbacks(slug, getFeedbacks(slug).filter(f => f.id !== body.id))
+  }
+  return new Response(null, { status: 204 })
+})
+
+// ── SitePing public API (legacy per-method routes) ────────────────────────────
 
 app.post('/sp/feedback/:slug', async (c) => {
   const { slug } = c.req.param()

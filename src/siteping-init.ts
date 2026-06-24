@@ -1,72 +1,63 @@
 import { initSiteping } from '@siteping/widget'
 
-// Types defined inline — @siteping/core is not published on npm separately
+// @siteping/core is not published on npm — types and StoreNotFoundError defined inline
 class StoreNotFoundError extends Error {
   constructor(message: string) { super(message); this.name = 'StoreNotFoundError' }
 }
 
-interface Annotation {
-  id?: string; feedbackId?: string
-  cssSelector: string; xpath: string; textSnippet: string
-  elementTag: string; elementId?: string | null
-  textPrefix: string; textSuffix: string; fingerprint: string
-  neighborText: string; anchorKey?: string | null
-  xPct: number; yPct: number; wPct: number; hPct: number
-  scrollX: number; scrollY: number; viewportW: number; viewportH: number; devicePixelRatio: number
-  createdAt?: string
+// SitePing expects Date objects, not strings — convert after every API call
+function parseFeedback(f: any): any {
+  return {
+    ...f,
+    createdAt: new Date(f.createdAt),
+    updatedAt: new Date(f.updatedAt),
+    resolvedAt: f.resolvedAt ? new Date(f.resolvedAt) : null,
+    annotations: (f.annotations ?? []).map((a: any) => ({
+      ...a,
+      createdAt: new Date(a.createdAt),
+    })),
+  }
 }
-
-interface Feedback {
-  id: string; clientId: string; projectName: string
-  type: string; message: string; status: string
-  url: string; urlPattern?: string | null
-  authorName: string; authorEmail: string
-  viewport: string; userAgent: string
-  resolvedAt?: string | null; createdAt: string; updatedAt: string
-  annotations: Annotation[]
-  screenshotUrl?: string | null; diagnostics?: unknown
-}
-
-interface FeedbackPage { feedbacks: Feedback[]; total: number }
 
 function createDemoStore(slug: string) {
   const base = location.origin
 
   return {
-    async createFeedback(data: Record<string, unknown>): Promise<Feedback> {
+    async createFeedback(data: Record<string, unknown>): Promise<any> {
       const res = await fetch(`${base}/sp/feedback/${slug}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      return res.json()
+      return parseFeedback(await res.json())
     },
 
-    async getFeedbacks(query: Record<string, unknown>): Promise<FeedbackPage> {
+    async getFeedbacks(query: Record<string, unknown>): Promise<any> {
       const p = new URLSearchParams({ page: String(query.page ?? 1), limit: String(query.limit ?? 50) })
       if (query.status) p.set('status', String(query.status))
       if (query.type) p.set('type', String(query.type))
       if (query.search) p.set('search', String(query.search))
       const res = await fetch(`${base}/sp/feedbacks/${slug}?${p}`)
       if (!res.ok) return { feedbacks: [], total: 0 }
-      return res.json()
+      const { feedbacks, total } = await res.json()
+      return { feedbacks: feedbacks.map(parseFeedback), total }
     },
 
-    async findByClientId(clientId: string): Promise<Feedback | null> {
+    async findByClientId(clientId: string): Promise<any> {
       const res = await fetch(`${base}/sp/feedback/${slug}/client/${encodeURIComponent(clientId)}`)
       if (res.status === 404) return null
-      return res.json()
+      return parseFeedback(await res.json())
     },
 
-    async updateFeedback(id: string, data: Record<string, unknown>): Promise<Feedback> {
+    async updateFeedback(id: string, data: Record<string, unknown>): Promise<any> {
       const res = await fetch(`${base}/sp/feedback/${slug}/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       })
       if (res.status === 404) throw new StoreNotFoundError(`Not found: ${id}`)
-      return res.json()
+      return parseFeedback(await res.json())
     },
 
     async deleteFeedback(id: string): Promise<void> {

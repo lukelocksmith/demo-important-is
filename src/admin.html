@@ -645,6 +645,9 @@
   document.getElementById('pwd-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') savePassword()
   })
+  document.getElementById('new-slug').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); createProject() }
+  })
 
   loadProjects()
 </script>

@@ -274,6 +274,8 @@
       wordWrap: 'on',
       automaticLayout: true,
     })
+    // Monaco intercepts keyboard events — must add Ctrl/Cmd+S directly to the editor
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => saveFile())
   })
 
   async function loadProjects() {
@@ -646,7 +648,16 @@
     if (e.key === 'Enter') savePassword()
   })
   document.getElementById('new-slug').addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); createProject() }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      // If HTML textarea is empty, move focus there so user can fill it in
+      const html = document.getElementById('new-html').value.trim()
+      if (activeTab === 'paste' && !html) {
+        document.getElementById('new-html').focus()
+      } else {
+        createProject()
+      }
+    }
   })
 
   loadProjects()

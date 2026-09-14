@@ -3,7 +3,7 @@ create extension if not exists pgcrypto;
 create table if not exists public.trip_users (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
-  pin_hash text not null,
+  pin_hash text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -46,18 +46,44 @@ alter table public.trip_users enable row level security;
 alter table public.trip_votes enable row level security;
 alter table public.trip_sessions enable row level security;
 
--- Access is intentionally server-only. The browser talks to Vercel API routes;
--- service-role credentials must stay in server environment variables.
+-- The browser never talks to these tables directly. Vercel API routes use the
+-- Supabase service-role key stored only in server environment variables.
 
-insert into public.trip_users(name, pin_hash)
+insert into public.trip_users(name)
 values
-  ('Łukasz', crypt('0000', gen_salt('bf'))),
-  ('Nela', crypt('0000', gen_salt('bf'))),
-  ('Marta', crypt('0000', gen_salt('bf'))),
-  ('Przemysław', crypt('0000', gen_salt('bf'))),
-  ('Ninka', crypt('0000', gen_salt('bf'))),
-  ('Michał', crypt('0000', gen_salt('bf'))),
-  ('Elżbieta', crypt('0000', gen_salt('bf'))),
-  ('Grzegorz', crypt('0000', gen_salt('bf'))),
-  ('Adam', crypt('0000', gen_salt('bf')))
+  ('Łukasz'),('Nela'),('Marta'),('Przemysław'),('Ninka'),('Michał'),('Elżbieta'),('Grzegorz'),('Adam')
 on conflict (name) do nothing;
+
+create or replace function public.claim_or_login_trip_user(p_name text, p_pin text)
+returns table(user_id uuid, user_name text, first_login boolean)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  u public.trip_users%rowtype;
+  was_first boolean := false;
+begin
+  if p_pin !~ '^[0-9]{4}$' then
+    raise exception 'PIN must have exactly four digits';
+  end if;
+
+  select * into u from public.trip_users where name = p_name for update;
+  if not found then
+    raise exception 'Unknown user';
+  end if;
+
+  if u.pin_hash is null then
+    update public.trip_users
+      set pin_hash = crypt(p_pin, gen_salt('bf'))
+      where id = u.id;
+    was_first := true;
+  elsif crypt(p_pin, u.pin_hash) <> u.pin_hash then
+    raise exception 'Invalid PIN';
+  end if;
+
+  return query select u.id, u.name, was_first;
+end $$;
+
+revoke all on function public.claim_or_login_trip_user(text,text) from public;
+grant execute on function public.claim_or_login_trip_user(text,text) to service_role;

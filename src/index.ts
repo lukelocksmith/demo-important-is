@@ -747,6 +747,14 @@ app.get('/:slug', (c) => {
   return c.html(injectSitePing(html, slug))
 })
 
+// Links pasted as /slug/ used to 404; send them to the canonical /slug.
+app.get('/:slug/', (c) => {
+  const { slug } = c.req.param()
+  if (!validSlug(slug)) return c.text('Not found', 404)
+  const query = new URL(c.req.url).search
+  return c.redirect(`/${slug}${query}`, 301)
+})
+
 app.get('/:slug/:filename{.+}', (c) => {
   const { slug, filename } = c.req.param()
   if (!validSlug(slug)) return c.text('Not found', 404)
